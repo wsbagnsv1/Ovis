@@ -25,8 +25,8 @@ class OvisRunner:
         self.dtype = torch.bfloat16
         self.device = torch.cuda.current_device()
         self.dtype = torch.bfloat16
-        self.model = Ovis.from_pretrained(self.model_path, torch_dtype=self.dtype, multimodal_max_length=32768)
-        self.model = self.model.eval().to(device=self.device)
+        self.model = Ovis.from_pretrained(self.model_path, torch_dtype=self.dtype, multimodal_max_length=32768, device_map="auto")
+        self.model = self.model.eval()
         self.eos_token_id = self.model.generation_config.eos_token_id
         self.text_tokenizer = self.model.get_text_tokenizer()
         self.pad_token_id = self.text_tokenizer.pad_token_id
