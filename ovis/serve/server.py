@@ -66,4 +66,4 @@ if __name__ == '__main__':
         title=args.model_path.split('/')[-1],
         flagging_dir=args.flagging_dir
     )
-    demo.launch(server_port=args.port)
+    demo.launch(server_port=args.port, share=True)
