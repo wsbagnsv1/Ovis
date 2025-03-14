@@ -23,9 +23,12 @@ class OvisRunner:
     def __init__(self, args: RunnerArguments):
         self.model_path = args.model_path
         self.dtype = torch.bfloat16
-        self.device = torch.cuda.current_device()
-        self.dtype = torch.bfloat16
-        self.model = Ovis.from_pretrained(self.model_path, torch_dtype=self.dtype, multimodal_max_length=32768, device_map="auto")
+        self.model = Ovis.from_pretrained(
+            self.model_path,
+            torch_dtype=self.dtype,
+            multimodal_max_length=32768,
+            device_map="auto"
+        )
         self.model = self.model.eval()
         self.eos_token_id = self.model.generation_config.eos_token_id
         self.text_tokenizer = self.model.get_text_tokenizer()
@@ -47,11 +50,9 @@ class OvisRunner:
         )
 
     def preprocess(self, inputs: List[Union[Image.Image, str]]):
-        # for single image and single text inputs, ensure image ahead
         if len(inputs) == 2 and isinstance(inputs[0], str) and isinstance(inputs[1], Image.Image):
             inputs = reversed(inputs)
 
-        # build query
         query = ''
         images = []
         for data in inputs:
@@ -63,14 +64,17 @@ class OvisRunner:
             elif data is not None:
                 raise RuntimeError(f'Invalid input type, expected `PIL.Image.Image` or `str`, but got {type(data)}')
 
-        # format conversation
         prompt, input_ids, pixel_values = self.model.preprocess_inputs(
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
-        input_ids = input_ids.unsqueeze(0).to(device=self.device)
-        attention_mask = attention_mask.unsqueeze(0).to(device=self.device)
+        
+        # Remove explicit device movement - let Accelerate handle placement
+        input_ids = input_ids.unsqueeze(0)
+        attention_mask = attention_mask.unsqueeze(0)
+        
         if pixel_values is not None:
-            pixel_values = [pixel_values.to(device=self.device, dtype=self.dtype)]
+            # Only convert dtype, device will be handled by model
+            pixel_values = [pixel_values.to(dtype=self.dtype)]
         else:
             pixel_values = [None]
 
