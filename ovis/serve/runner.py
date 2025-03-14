@@ -1,9 +1,9 @@
 from dataclasses import field, dataclass
 from typing import Optional, Union, List
-
+import os
 import torch
 from PIL import Image
-from accelerate import dispatch_model, infer_auto_device_map  # Remove 'get_balanced_memory'
+from accelerate import dispatch_model, infer_auto_device_map
 from torch import nn
 
 from ovis.model.modeling_ovis import Ovis
@@ -24,6 +24,10 @@ class OvisRunner:
         self.model_path = args.model_path
         self.dtype = torch.bfloat16
 
+        # Create offload directory
+        self.offload_dir = "/tmp/offload"
+        os.makedirs(self.offload_dir, exist_ok=True)
+
         # Step 1: Load the model on CPU to compute the device_map
         temp_model = Ovis.from_pretrained(
             self.model_path,
@@ -32,7 +36,7 @@ class OvisRunner:
             device_map="cpu",  # Load on CPU first
         )
 
-        # Step 2: Compute the balanced device_map (without get_balanced_memory)
+        # Step 2: Compute the balanced device_map with CPU offload
         device_map = self._get_balanced_device_map(temp_model)
 
         # Step 3: Load the model with the computed device_map
@@ -44,11 +48,15 @@ class OvisRunner:
             device_map=device_map,  # Use the computed device_map
         )
 
-        # Ensure the model is in evaluation mode
-        self.model.eval()
+        # Step 4: Dispatch the model with offload_dir
+        dispatch_model(
+            self.model,
+            device_map=device_map,
+            offload_folder=self.offload_dir,
+            main_device=torch.cuda.current_device(),
+        )
 
-        # Explicitly dispatch the model to the correct devices
-        dispatch_model(self.model, device_map=device_map)
+        self.model.eval()  # Ensure evaluation mode
 
         self.eos_token_id = self.model.generation_config.eos_token_id
         self.text_tokenizer = self.model.get_text_tokenizer()
@@ -71,12 +79,14 @@ class OvisRunner:
         )
 
     def _get_balanced_device_map(self, model):
-        # Use integers (0, 1) for device keys
+        # Include CPU offload in max_memory
         num_gpus = torch.cuda.device_count()
         max_memory = {}
         for i in range(num_gpus):
-            # Example: 15GB per GPU (adjust based on your actual GPU memory)
-            max_memory[i] = f"{int(torch.cuda.get_device_properties(i).total_memory / 1e9 - 1)}GB"
+            max_memory[i] = f"{int(torch.cuda.get_device_properties(i).total_memory / 1e9 - 1)}GB"  # 1GB headroom
+        # Add CPU offload capacity (adjust based on your system RAM)
+        max_memory["cpu"] = "100GB"  # Example: 100GB of RAM available for offloading
+
         device_map = infer_auto_device_map(
             model,
             max_memory=max_memory,
