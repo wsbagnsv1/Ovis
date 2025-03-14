@@ -3,7 +3,7 @@ from typing import Optional, Union, List
 
 import torch
 from PIL import Image
-from accelerate import dispatch_model, infer_auto_device_map, get_balanced_memory
+from accelerate import dispatch_model, infer_auto_device_map  # Remove 'get_balanced_memory'
 from torch import nn
 
 from ovis.model.modeling_ovis import Ovis
@@ -32,7 +32,7 @@ class OvisRunner:
             device_map="cpu",  # Load on CPU first
         )
 
-        # Step 2: Compute the balanced device_map
+        # Step 2: Compute the balanced device_map (without get_balanced_memory)
         device_map = self._get_balanced_device_map(temp_model)
 
         # Step 3: Load the model with the computed device_map
@@ -71,16 +71,14 @@ class OvisRunner:
         )
 
     def _get_balanced_device_map(self, model):
-        # Use accelerate's balanced memory allocation
-        max_memory = get_balanced_memory(
-            model,
-            max_memory={f"cuda:{i}": "5GB" for i in range(torch.cuda.device_count())},
-            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust based on your model
-        )
+        # Manually define max_memory based on your GPUs (e.g., 2x 16GB GPUs)
+        max_memory = {
+            f"cuda:{i}": "15GB" for i in range(torch.cuda.device_count())
+        }
         device_map = infer_auto_device_map(
             model,
             max_memory=max_memory,
-            no_split_module_classes=["VisualTransformerEmbedding"]
+            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust based on your model
         )
         return device_map
 
