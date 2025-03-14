@@ -31,6 +31,10 @@ class OvisRunner:
             torch_dtype=self.dtype,
             multimodal_max_length=8192/2  # which equals 4096
         )
+        # Move base model to GPU before wrapping
+        self.model = self.model.to(self.device)  # Explicitly move to GPU
+
+        # Wrap with DataParallel
         self.model = nn.DataParallel(self.model, device_ids=[0, 1])
         self.model = self.model.eval()
 
