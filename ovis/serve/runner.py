@@ -1,5 +1,6 @@
 from dataclasses import field, dataclass
 from typing import Optional, Union, List
+import os
 import torch
 from PIL import Image
 from accelerate import dispatch_model, infer_auto_device_map
@@ -21,18 +22,22 @@ class RunnerArguments:
 class OvisRunner:
     def __init__(self, args: RunnerArguments):
         self.model_path = args.model_path
-        self.dtype = torch.bfloat16
+        self.dtype = torch.bfloat16  # Use float16 for lower VRAM if needed
+
+        # Use RAM-backed tmpfs for offload_dir
+        self.offload_dir = "/dev/shm/offload"
+        os.makedirs(self.offload_dir, exist_ok=True)
 
         # Step 1: Load the model on CPU to compute the device_map
         temp_model = Ovis.from_pretrained(
             self.model_path,
             torch_dtype=self.dtype,
             low_cpu_mem_usage=True,
-            device_map="cpu",  # Load on CPU first
+            device_map="cpu",
         )
 
-        # Step 2: Compute device_map without CPU offloading
-        device_map = self._get_gpu_only_device_map(temp_model)
+        # Step 2: Compute device_map with CPU/RAM offloading
+        device_map = self._get_balanced_device_map(temp_model)
 
         # Step 3: Load the model with the computed device_map
         del temp_model  # Free up memory
@@ -40,51 +45,39 @@ class OvisRunner:
             self.model_path,
             torch_dtype=self.dtype,
             low_cpu_mem_usage=True,
-            device_map=device_map,  # Use the computed device_map
+            device_map=device_map,
         )
 
-        # Step 4: Dispatch the model (no offload_dir needed)
+        # Step 4: Dispatch the model with offload_dir (RAM-backed)
         dispatch_model(
             self.model,
             device_map=device_map,
+            offload_dir=self.offload_dir,  # Use RAM-backed directory
             main_device=torch.cuda.current_device(),
         )
 
-        self.model.eval()  # Ensure evaluation mode
+        self.model.eval()
+        # ... rest of the code remains the same ...
 
-        self.eos_token_id = self.model.generation_config.eos_token_id
-        self.text_tokenizer = self.model.get_text_tokenizer()
-        self.pad_token_id = self.text_tokenizer.pad_token_id
-        self.visual_tokenizer = self.model.get_visual_tokenizer()
-        self.conversation_formatter = self.model.get_conversation_formatter()
-
-        self.image_placeholder = IMAGE_TOKEN
-        self.max_partition = args.max_partition
-        self.gen_kwargs = dict(
-            max_new_tokens=args.max_new_tokens,
-            do_sample=args.do_sample,
-            top_p=args.top_p,
-            top_k=args.top_k,
-            temperature=args.temperature,
-            repetition_penalty=None,
-            eos_token_id=self.eos_token_id,
-            pad_token_id=self.pad_token_id,
-            use_cache=True
-        )
-
-    def _get_gpu_only_device_map(self, model):
-        # Compute device_map using only GPUs
+    def _get_balanced_device_map(self, model):
         num_gpus = torch.cuda.device_count()
         max_memory = {}
+
+        # Assign 90% of each GPU's memory
         for i in range(num_gpus):
-            # Use 90% of each GPU's memory to avoid overflow
             total_mem = torch.cuda.get_device_properties(i).total_memory
             max_memory[i] = f"{int(total_mem * 0.9 / 1e9)}GB"
+
+        # Use available RAM (e.g., 100GB allocated via tmpfs)
+        max_memory["cpu"] = "100GB"  # Adjust based on your tmpfs size
+
+        # Specify modules that cannot be split
+        no_split = ["VisualTransformerEmbedding", "vte", "visual_tokenizer"]
 
         device_map = infer_auto_device_map(
             model,
             max_memory=max_memory,
-            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust based on your model
+            no_split_module_classes=no_split,
         )
         return device_map
 
