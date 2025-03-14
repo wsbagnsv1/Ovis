@@ -72,7 +72,7 @@ class OvisRunner:
                 raise RuntimeError(f'Invalid input type, expected `PIL.Image.Image` or `str`, but got {type(data)}')
 
         # format conversation
-        prompt, input_ids, pixel_values = self.model.preprocess_inputs(
+        prompt, input_ids, pixel_values = self.model.module.preprocess_inputs(
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
         input_ids = input_ids.unsqueeze(0).to(device=self.device)
