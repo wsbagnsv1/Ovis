@@ -71,14 +71,16 @@ class OvisRunner:
         )
 
     def _get_balanced_device_map(self, model):
-        # Manually define max_memory based on your GPUs (e.g., 2x 16GB GPUs)
-        max_memory = {
-            f"cuda:{i}": "15GB" for i in range(torch.cuda.device_count())
-        }
+        # Use integers (0, 1) for device keys
+        num_gpus = torch.cuda.device_count()
+        max_memory = {}
+        for i in range(num_gpus):
+            # Example: 15GB per GPU (adjust based on your actual GPU memory)
+            max_memory[i] = f"{int(torch.cuda.get_device_properties(i).total_memory / 1e9 - 1)}GB"
         device_map = infer_auto_device_map(
             model,
             max_memory=max_memory,
-            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust based on your model
+            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust if needed
         )
         return device_map
 
