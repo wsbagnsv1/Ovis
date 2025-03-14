@@ -17,33 +17,28 @@ class RunnerArguments:
     top_k: Optional[int] = field(default=None)
     temperature: Optional[float] = field(default=None)
     max_partition: int = field(default=9)
-
+    
 from torch import nn
+
 class OvisRunner:
     def __init__(self, args: RunnerArguments):
         self.model_path = args.model_path
         self.dtype = torch.bfloat16
         self.device = torch.cuda.current_device()
         self.dtype = torch.bfloat16
-        
-        
-        self.model = Ovis.from_pretrained(self.model_path, torch_dtype=self.dtype, multimodal_max_length=int(32768/4))
+        self.model = Ovis.from_pretrained(
+            self.model_path,
+            torch_dtype=self.dtype,
+            multimodal_max_length=8192/2  # which equals 4096
+        )
         self.model = nn.DataParallel(self.model, device_ids=[0, 1])
-        self.model = self.model.eval().to(device=self.device)
-                
-        self.eos_token_id = self.model.module.generation_config.eos_token_id
+        self.model = self.model.eval()
 
-        self.text_tokenizer = self.model.module.get_text_tokenizer()
-
-
-        
+        self.eos_token_id = self.model.generation_config.eos_token_id
+        self.text_tokenizer = self.model.get_text_tokenizer()
         self.pad_token_id = self.text_tokenizer.pad_token_id
-        
-        
-        self.visual_tokenizer = self.model.module.get_visual_tokenizer()
-        
-        self.conversation_formatter = self.model.module.get_conversation_formatter()
-        
+        self.visual_tokenizer = self.model.get_visual_tokenizer()
+        self.conversation_formatter = self.model.get_conversation_formatter()
         self.image_placeholder = IMAGE_TOKEN
         self.max_partition = args.max_partition
         self.gen_kwargs = dict(
@@ -76,7 +71,7 @@ class OvisRunner:
                 raise RuntimeError(f'Invalid input type, expected `PIL.Image.Image` or `str`, but got {type(data)}')
 
         # format conversation
-        prompt, input_ids, pixel_values = self.model.module.preprocess_inputs(
+        prompt, input_ids, pixel_values = self.model.preprocess_inputs(
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
         input_ids = input_ids.unsqueeze(0).to(device=self.device)
@@ -91,7 +86,7 @@ class OvisRunner:
     def run(self, inputs: List[Union[Image.Image, str]]):
         prompt, input_ids, attention_mask, pixel_values = self.preprocess(inputs)
         with torch.inference_mode():
-            output_ids = self.model.module.generate(
+            output_ids = self.model.generate(
                 input_ids,
                 pixel_values=pixel_values,
                 attention_mask=attention_mask,
