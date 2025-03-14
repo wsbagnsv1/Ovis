@@ -27,7 +27,8 @@ class OvisRunner:
         # Use RAM-backed tmpfs for offload_dir
         self.offload_dir = "/dev/shm/offload"
         os.makedirs(self.offload_dir, exist_ok=True)
-
+        # Initialize image_placeholder using the imported constant
+        self.image_placeholder = IMAGE_TOKEN  # Add this line
         # Step 1: Load the model on CPU to compute the device_map
         temp_model = Ovis.from_pretrained(
             self.model_path,
