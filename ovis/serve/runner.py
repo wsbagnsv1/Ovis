@@ -18,18 +18,18 @@ class RunnerArguments:
     temperature: Optional[float] = field(default=None)
     max_partition: int = field(default=9)
 
-
 class OvisRunner:
     def __init__(self, args: RunnerArguments):
         self.model_path = args.model_path
         self.dtype = torch.bfloat16
+        self.device = "cuda"  # Let device_map handle GPU assignment
         self.model = Ovis.from_pretrained(
             self.model_path,
             torch_dtype=self.dtype,
             multimodal_max_length=32768,
-            device_map="auto"
-        )
-        self.model = self.model.eval()
+            device_map="auto",
+            low_cpu_mem_usage=True  # Prevent meta tensors
+        ).eval()
         self.eos_token_id = self.model.generation_config.eos_token_id
         self.text_tokenizer = self.model.get_text_tokenizer()
         self.pad_token_id = self.text_tokenizer.pad_token_id
@@ -50,9 +50,11 @@ class OvisRunner:
         )
 
     def preprocess(self, inputs: List[Union[Image.Image, str]]):
+        # for single image and single text inputs, ensure image ahead
         if len(inputs) == 2 and isinstance(inputs[0], str) and isinstance(inputs[1], Image.Image):
             inputs = reversed(inputs)
-    
+
+        # build query
         query = ''
         images = []
         for data in inputs:
@@ -63,32 +65,25 @@ class OvisRunner:
                 query += data.replace(self.image_placeholder, '')
             elif data is not None:
                 raise RuntimeError(f'Invalid input type, expected `PIL.Image.Image` or `str`, but got {type(data)}')
-    
-        # Check if there's no text (after removing image placeholders)
-        if query.replace(self.image_placeholder, '').strip() == '':
-            query += ' '  # Add a space to ensure text input
-    
+
+        # format conversation
         prompt, input_ids, pixel_values = self.model.preprocess_inputs(
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
-        
-        # Add batch dimension and maintain CPU placement
-        input_ids = input_ids.unsqueeze(0)
-        attention_mask = attention_mask.unsqueeze(0)
-        
+        input_ids = input_ids.unsqueeze(0)  # Removed .to(device=self.device)
+        attention_mask = attention_mask.unsqueeze(0)  # Removed .to(device=self.device)
         if pixel_values is not None:
-            # Convert dtype but keep on CPU for Accelerate to handle
-            pixel_values = pixel_values.to(dtype=self.dtype)
+            pixel_values = [pixel_values]  # Removed .to(device=self.device, dtype=self.dtype)
         else:
-            pixel_values = None
-    
+            pixel_values = [None]
+
         return prompt, input_ids, attention_mask, pixel_values
 
     def run(self, inputs: List[Union[Image.Image, str]]):
         prompt, input_ids, attention_mask, pixel_values = self.preprocess(inputs)
         with torch.inference_mode():
             output_ids = self.model.generate(
-                input_ids=input_ids,
+                input_ids,
                 pixel_values=pixel_values,
                 attention_mask=attention_mask,
                 **self.gen_kwargs
