@@ -3,8 +3,7 @@ from typing import Optional, Union, List
 
 import torch
 from PIL import Image
-from accelerate import dispatch_model, infer_auto_device_map
-from accelerate.utils import get_balanced_memory
+from accelerate import dispatch_model, infer_auto_device_map, get_balanced_memory
 from torch import nn
 
 from ovis.model.modeling_ovis import Ovis
@@ -24,20 +23,32 @@ class OvisRunner:
     def __init__(self, args: RunnerArguments):
         self.model_path = args.model_path
         self.dtype = torch.bfloat16
-        self.device = torch.cuda.current_device()
 
-        # Load model with accelerate's device_map for proper parallelism
+        # Step 1: Load the model on CPU to compute the device_map
+        temp_model = Ovis.from_pretrained(
+            self.model_path,
+            torch_dtype=self.dtype,
+            low_cpu_mem_usage=True,
+            device_map="cpu",  # Load on CPU first
+        )
+
+        # Step 2: Compute the balanced device_map
+        device_map = self._get_balanced_device_map(temp_model)
+
+        # Step 3: Load the model with the computed device_map
+        del temp_model  # Free up memory
         self.model = Ovis.from_pretrained(
             self.model_path,
             torch_dtype=self.dtype,
-            low_cpu_mem_usage=True,  # Reduce memory usage during loading
-            # Use accelerate's balanced device_map
-            device_map=self._get_balanced_device_map(self.model)
+            low_cpu_mem_usage=True,
+            device_map=device_map,  # Use the computed device_map
         )
-        self.model.eval()  # Ensure evaluation mode
 
-        # Ensure all parameters are on the correct devices
-        dispatch_model(self.model, device_map=self.model.device_map)
+        # Ensure the model is in evaluation mode
+        self.model.eval()
+
+        # Explicitly dispatch the model to the correct devices
+        dispatch_model(self.model, device_map=device_map)
 
         self.eos_token_id = self.model.generation_config.eos_token_id
         self.text_tokenizer = self.model.get_text_tokenizer()
