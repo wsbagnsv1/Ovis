@@ -109,18 +109,13 @@ class OvisRunner:
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
 
-        # Ensure tensors are on the correct devices
-        input_ids = input_ids.unsqueeze(0).to(self.model.device_map["text_encoder"])  # Example: adjust based on your model's device_map
-        attention_mask = attention_mask.unsqueeze(0).to(self.model.device_map["text_encoder"])
-
-        if pixel_values is not None:
-            # Move pixel_values to the correct device (e.g., the first GPU)
-            pixel_values = [pv.to(device=self.model.device_map["visual_encoder"], dtype=self.dtype) for pv in pixel_values]
-        else:
-            pixel_values = [None]
-
+        # Move tensors to device1 (GPU 0)
+        input_ids = input_ids.to(self.device1)
+        attention_mask = attention_mask.to(self.device1)
+        pixel_values = [pv.to(self.device1, dtype=self.dtype) for pv in pixel_values]
+    
         return prompt, input_ids, attention_mask, pixel_values
-
+        
     def run(self, inputs: List[Union[Image.Image, str]]):
         prompt, input_ids, attention_mask, pixel_values = self.preprocess(inputs)
         with torch.inference_mode():
