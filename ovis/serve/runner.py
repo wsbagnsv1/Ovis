@@ -3,6 +3,8 @@ from typing import Optional, Union, List
 
 import torch
 from PIL import Image
+from accelerate import dispatch_model, infer_auto_device_map
+from accelerate.utils import get_balanced_memory
 from torch import nn
 
 from ovis.model.modeling_ovis import Ovis
@@ -24,14 +26,18 @@ class OvisRunner:
         self.dtype = torch.bfloat16
         self.device = torch.cuda.current_device()
 
-        # Load model with device_map="auto" for model parallelism across GPUs
+        # Load model with accelerate's device_map for proper parallelism
         self.model = Ovis.from_pretrained(
             self.model_path,
             torch_dtype=self.dtype,
-            device_map="auto",  # Key change: use model parallelism
-            multimodal_max_length=4096  # Fixed from 8192/2 to 4096
+            low_cpu_mem_usage=True,  # Reduce memory usage during loading
+            # Use accelerate's balanced device_map
+            device_map=self._get_balanced_device_map(self.model)
         )
-        self.model.eval()  # Ensure model is in eval mode
+        self.model.eval()  # Ensure evaluation mode
+
+        # Ensure all parameters are on the correct devices
+        dispatch_model(self.model, device_map=self.model.device_map)
 
         self.eos_token_id = self.model.generation_config.eos_token_id
         self.text_tokenizer = self.model.get_text_tokenizer()
@@ -52,6 +58,20 @@ class OvisRunner:
             pad_token_id=self.pad_token_id,
             use_cache=True
         )
+
+    def _get_balanced_device_map(self, model):
+        # Use accelerate's balanced memory allocation
+        max_memory = get_balanced_memory(
+            model,
+            max_memory={f"cuda:{i}": "5GB" for i in range(torch.cuda.device_count())},
+            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust based on your model
+        )
+        device_map = infer_auto_device_map(
+            model,
+            max_memory=max_memory,
+            no_split_module_classes=["VisualTransformerEmbedding"]
+        )
+        return device_map
 
     def preprocess(self, inputs: List[Union[Image.Image, str]]):
         # Ensure image is first if mixed with text
@@ -74,12 +94,13 @@ class OvisRunner:
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
 
-        # Move tensors to appropriate devices (handled by device_map, but ensure consistency)
-        input_ids = input_ids.unsqueeze(0).to(self.model.device)
-        attention_mask = attention_mask.unsqueeze(0).to(self.model.device)
+        # Ensure tensors are on the correct devices
+        input_ids = input_ids.unsqueeze(0).to(self.model.device_map["text_encoder"])  # Example: adjust based on your model's device_map
+        attention_mask = attention_mask.unsqueeze(0).to(self.model.device_map["text_encoder"])
 
         if pixel_values is not None:
-            pixel_values = [pv.to(device=self.model.device, dtype=self.dtype) for pv in pixel_values]
+            # Move pixel_values to the correct device (e.g., the first GPU)
+            pixel_values = [pv.to(device=self.model.device_map["visual_encoder"], dtype=self.dtype) for pv in pixel_values]
         else:
             pixel_values = [None]
 
