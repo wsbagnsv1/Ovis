@@ -68,15 +68,15 @@ class OvisRunner:
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
         
-        # Remove explicit device movement - let Accelerate handle placement
+        # Add batch dimension and maintain CPU placement
         input_ids = input_ids.unsqueeze(0)
         attention_mask = attention_mask.unsqueeze(0)
         
         if pixel_values is not None:
-            # Only convert dtype, device will be handled by model
-            pixel_values = [pixel_values.to(dtype=self.dtype)]
+            # Convert dtype but keep on CPU for Accelerate to handle
+            pixel_values = pixel_values.to(dtype=self.dtype)
         else:
-            pixel_values = [None]
+            pixel_values = None
 
         return prompt, input_ids, attention_mask, pixel_values
 
@@ -84,7 +84,7 @@ class OvisRunner:
         prompt, input_ids, attention_mask, pixel_values = self.preprocess(inputs)
         with torch.inference_mode():
             output_ids = self.model.generate(
-                input_ids,
+                input_ids=input_ids,
                 pixel_values=pixel_values,
                 attention_mask=attention_mask,
                 **self.gen_kwargs
