@@ -52,7 +52,7 @@ class OvisRunner:
     def preprocess(self, inputs: List[Union[Image.Image, str]]):
         if len(inputs) == 2 and isinstance(inputs[0], str) and isinstance(inputs[1], Image.Image):
             inputs = reversed(inputs)
-
+    
         query = ''
         images = []
         for data in inputs:
@@ -63,7 +63,11 @@ class OvisRunner:
                 query += data.replace(self.image_placeholder, '')
             elif data is not None:
                 raise RuntimeError(f'Invalid input type, expected `PIL.Image.Image` or `str`, but got {type(data)}')
-
+    
+        # Check if there's no text (after removing image placeholders)
+        if query.replace(self.image_placeholder, '').strip() == '':
+            query += ' '  # Add a space to ensure text input
+    
         prompt, input_ids, pixel_values = self.model.preprocess_inputs(
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
@@ -77,7 +81,7 @@ class OvisRunner:
             pixel_values = pixel_values.to(dtype=self.dtype)
         else:
             pixel_values = None
-
+    
         return prompt, input_ids, attention_mask, pixel_values
 
     def run(self, inputs: List[Union[Image.Image, str]]):
