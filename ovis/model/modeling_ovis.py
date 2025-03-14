@@ -163,6 +163,8 @@ class Ovis(OvisPreTrainedModel):
         pixel_values: List[Optional[torch.Tensor]],
         left_padding: bool = False
     ):
+        # Ensure text_input_id is on the same device as the model
+        text_input_id = text_input_id.to(self.device)
         input_device = text_input_ids.device
         visual_vocab_szie = self.get_visual_tokenizer().config.vocab_size
         visual_indicator_embeds = self.get_vte()(
