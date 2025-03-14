@@ -34,11 +34,12 @@ class OvisRunner:
         self.model = nn.DataParallel(self.model, device_ids=[0, 1])
         self.model = self.model.eval()
 
-        self.eos_token_id = self.model.generation_config.eos_token_id
-        self.text_tokenizer = self.model.get_text_tokenizer()
+        self.eos_token_id = self.model.module.generation_config.eos_token_id
+        self.text_tokenizer = self.model.module.get_text_tokenizer()
         self.pad_token_id = self.text_tokenizer.pad_token_id
-        self.visual_tokenizer = self.model.get_visual_tokenizer()
-        self.conversation_formatter = self.model.get_conversation_formatter()
+        self.visual_tokenizer = self.model.module.get_visual_tokenizer()
+        self.conversation_formatter = self.model.module.get_conversation_formatter()
+        
         self.image_placeholder = IMAGE_TOKEN
         self.max_partition = args.max_partition
         self.gen_kwargs = dict(
