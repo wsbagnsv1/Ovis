@@ -57,7 +57,25 @@ class OvisRunner:
         )
 
         self.model.eval()
-        # ... rest of the code remains the same ...
+        self.eos_token_id = self.model.generation_config.eos_token_id
+        self.text_tokenizer = self.model.get_text_tokenizer()
+        self.pad_token_id = self.text_tokenizer.pad_token_id
+        self.visual_tokenizer = self.model.get_visual_tokenizer()
+        self.conversation_formatter = self.model.get_conversation_formatter()
+ 
+        self.image_placeholder = IMAGE_TOKEN
+        self.max_partition = args.max_partition
+        self.gen_kwargs = dict(
+            max_new_tokens=args.max_new_tokens,
+            do_sample=args.do_sample,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            temperature=args.temperature,
+            repetition_penalty=None,
+            eos_token_id=self.eos_token_id,
+            pad_token_id=self.pad_token_id,
+            use_cache=True
+        )
 
     def _get_balanced_device_map(self, model):
         num_gpus = torch.cuda.device_count()
