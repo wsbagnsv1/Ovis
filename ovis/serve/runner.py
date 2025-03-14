@@ -87,7 +87,7 @@ class OvisRunner:
     def run(self, inputs: List[Union[Image.Image, str]]):
         prompt, input_ids, attention_mask, pixel_values = self.preprocess(inputs)
         with torch.inference_mode():
-            output_ids = self.model.generate(
+            output_ids = self.model.module.generate(  # <- Use .module here
                 input_ids,
                 pixel_values=pixel_values,
                 attention_mask=attention_mask,
