@@ -1,6 +1,5 @@
 from dataclasses import field, dataclass
 from typing import Optional, Union, List
-import os
 import torch
 from PIL import Image
 from accelerate import dispatch_model, infer_auto_device_map
@@ -24,10 +23,6 @@ class OvisRunner:
         self.model_path = args.model_path
         self.dtype = torch.bfloat16
 
-        # Create offload directory
-        self.offload_dir = "/tmp/offload"
-        os.makedirs(self.offload_dir, exist_ok=True)
-
         # Step 1: Load the model on CPU to compute the device_map
         temp_model = Ovis.from_pretrained(
             self.model_path,
@@ -36,8 +31,8 @@ class OvisRunner:
             device_map="cpu",  # Load on CPU first
         )
 
-        # Step 2: Compute the balanced device_map with CPU offload
-        device_map = self._get_balanced_device_map(temp_model)
+        # Step 2: Compute device_map without CPU offloading
+        device_map = self._get_gpu_only_device_map(temp_model)
 
         # Step 3: Load the model with the computed device_map
         del temp_model  # Free up memory
@@ -48,11 +43,10 @@ class OvisRunner:
             device_map=device_map,  # Use the computed device_map
         )
 
-        # Step 4: Dispatch the model with offload_dir
+        # Step 4: Dispatch the model (no offload_dir needed)
         dispatch_model(
             self.model,
             device_map=device_map,
-            offload_folder=self.offload_dir,
             main_device=torch.cuda.current_device(),
         )
 
@@ -78,19 +72,19 @@ class OvisRunner:
             use_cache=True
         )
 
-    def _get_balanced_device_map(self, model):
-        # Include CPU offload in max_memory
+    def _get_gpu_only_device_map(self, model):
+        # Compute device_map using only GPUs
         num_gpus = torch.cuda.device_count()
         max_memory = {}
         for i in range(num_gpus):
-            max_memory[i] = f"{int(torch.cuda.get_device_properties(i).total_memory / 1e9 - 1)}GB"  # 1GB headroom
-        # Add CPU offload capacity (adjust based on your system RAM)
-        max_memory["cpu"] = "100GB"  # Example: 100GB of RAM available for offloading
+            # Use 90% of each GPU's memory to avoid overflow
+            total_mem = torch.cuda.get_device_properties(i).total_memory
+            max_memory[i] = f"{int(total_mem * 0.9 / 1e9)}GB"
 
         device_map = infer_auto_device_map(
             model,
             max_memory=max_memory,
-            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust if needed
+            no_split_module_classes=["VisualTransformerEmbedding"]  # Adjust based on your model
         )
         return device_map
 
