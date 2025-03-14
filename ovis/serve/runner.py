@@ -3,10 +3,10 @@ from typing import Optional, Union, List
 
 import torch
 from PIL import Image
+from torch import nn
 
 from ovis.model.modeling_ovis import Ovis
 from ovis.util.constants import IMAGE_TOKEN
-
 
 @dataclass
 class RunnerArguments:
@@ -17,31 +17,28 @@ class RunnerArguments:
     top_k: Optional[int] = field(default=None)
     temperature: Optional[float] = field(default=None)
     max_partition: int = field(default=9)
-    
-from torch import nn
 
 class OvisRunner:
     def __init__(self, args: RunnerArguments):
         self.model_path = args.model_path
         self.dtype = torch.bfloat16
         self.device = torch.cuda.current_device()
-        self.dtype = torch.bfloat16
+
+        # Load model with device_map="auto" for model parallelism across GPUs
         self.model = Ovis.from_pretrained(
             self.model_path,
             torch_dtype=self.dtype,
-            multimodal_max_length=8192/2  # which equals 4096
+            device_map="auto",  # Key change: use model parallelism
+            multimodal_max_length=4096  # Fixed from 8192/2 to 4096
         )
-        # Move model to GPU first
-        self.model = self.model.to(self.device)
-        self.model = nn.DataParallel(self.model, device_ids=[0, 1])
-        self.model = self.model.eval()
+        self.model.eval()  # Ensure model is in eval mode
 
-        self.eos_token_id = self.model.module.generation_config.eos_token_id
-        self.text_tokenizer = self.model.module.get_text_tokenizer()
+        self.eos_token_id = self.model.generation_config.eos_token_id
+        self.text_tokenizer = self.model.get_text_tokenizer()
         self.pad_token_id = self.text_tokenizer.pad_token_id
-        self.visual_tokenizer = self.model.module.get_visual_tokenizer()
-        self.conversation_formatter = self.model.module.get_conversation_formatter()
-        
+        self.visual_tokenizer = self.model.get_visual_tokenizer()
+        self.conversation_formatter = self.model.get_conversation_formatter()
+
         self.image_placeholder = IMAGE_TOKEN
         self.max_partition = args.max_partition
         self.gen_kwargs = dict(
@@ -57,11 +54,10 @@ class OvisRunner:
         )
 
     def preprocess(self, inputs: List[Union[Image.Image, str]]):
-        # for single image and single text inputs, ensure image ahead
+        # Ensure image is first if mixed with text
         if len(inputs) == 2 and isinstance(inputs[0], str) and isinstance(inputs[1], Image.Image):
             inputs = reversed(inputs)
 
-        # build query
         query = ''
         images = []
         for data in inputs:
@@ -70,28 +66,29 @@ class OvisRunner:
                 images.append(data)
             elif isinstance(data, str):
                 query += data.replace(self.image_placeholder, '')
-            elif data is not None:
-                raise RuntimeError(f'Invalid input type, expected `PIL.Image.Image` or `str`, but got {type(data)}')
+            else:
+                raise RuntimeError(f"Invalid input type: {type(data)}")
 
-        # format conversation
-        prompt, input_ids, pixel_values = self.model.module.preprocess_inputs(
+        # Preprocess with model's method (handles device placement via device_map)
+        prompt, input_ids, pixel_values = self.model.preprocess_inputs(
             query, images, max_partition=self.max_partition)
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
-        input_ids = input_ids.unsqueeze(0).to(device=self.device)
-        attention_mask = attention_mask.unsqueeze(0).to(device=self.device)
-        
-        # Ensure pixel_values are on the correct device
+
+        # Move tensors to appropriate devices (handled by device_map, but ensure consistency)
+        input_ids = input_ids.unsqueeze(0).to(self.model.device)
+        attention_mask = attention_mask.unsqueeze(0).to(self.model.device)
+
         if pixel_values is not None:
-            pixel_values = [pv.to(device=self.device, dtype=self.dtype) for pv in pixel_values]
+            pixel_values = [pv.to(device=self.model.device, dtype=self.dtype) for pv in pixel_values]
         else:
             pixel_values = [None]
-    
+
         return prompt, input_ids, attention_mask, pixel_values
 
     def run(self, inputs: List[Union[Image.Image, str]]):
         prompt, input_ids, attention_mask, pixel_values = self.preprocess(inputs)
         with torch.inference_mode():
-            # Use the wrapped model, not .module
+            # Generate using the model (device_map handles parallelism)
             output_ids = self.model.generate(
                 input_ids,
                 pixel_values=pixel_values,
@@ -99,16 +96,13 @@ class OvisRunner:
                 **self.gen_kwargs
             )
         output = self.text_tokenizer.decode(output_ids[0], skip_special_tokens=True)
-        input_token_len = input_ids.shape[1]
-        output_token_len = output_ids.shape[1]
-        response = dict(
-            prompt=prompt,
-            output=output,
-            prompt_tokens=input_token_len,
-            total_tokens=input_token_len + output_token_len
-        )
+        response = {
+            "prompt": prompt,
+            "output": output,
+            "prompt_tokens": input_ids.shape[1],
+            "total_tokens": output_ids.shape[1]
+        }
         return response
-
 
 if __name__ == '__main__':
     runner_args = RunnerArguments(model_path='<model_path>')
