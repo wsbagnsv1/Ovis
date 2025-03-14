@@ -28,7 +28,7 @@ class OvisRunner:
             torch_dtype=self.dtype,
             multimodal_max_length=32768,
             device_map="auto",
-            low_cpu_mem_usage=True  # Prevent meta tensors
+            low_cpu_mem_usage=True  # Critical for avoiding meta tensors
         ).eval()
         self.eos_token_id = self.model.generation_config.eos_token_id
         self.text_tokenizer = self.model.get_text_tokenizer()
@@ -73,7 +73,9 @@ class OvisRunner:
         input_ids = input_ids.unsqueeze(0)  # Removed .to(device=self.device)
         attention_mask = attention_mask.unsqueeze(0)  # Removed .to(device=self.device)
         if pixel_values is not None:
-            pixel_values = [pixel_values]  # Removed .to(device=self.device, dtype=self.dtype)
+            # Get device from visual_tokenizer (part of the model)
+            device = next(self.visual_tokenizer.parameters()).device
+            pixel_values = [pixel_values.to(device=device, dtype=self.dtype)]
         else:
             pixel_values = [None]
 
