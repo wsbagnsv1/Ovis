@@ -31,6 +31,8 @@ class OvisRunner:
             torch_dtype=self.dtype,
             multimodal_max_length=8192/2  # which equals 4096
         )
+        # Move model to GPU first
+        self.model = self.model.to(self.device)
         self.model = nn.DataParallel(self.model, device_ids=[0, 1])
         self.model = self.model.eval()
 
@@ -77,17 +79,20 @@ class OvisRunner:
         attention_mask = torch.ne(input_ids, self.text_tokenizer.pad_token_id)
         input_ids = input_ids.unsqueeze(0).to(device=self.device)
         attention_mask = attention_mask.unsqueeze(0).to(device=self.device)
+        
+        # Ensure pixel_values are on the correct device
         if pixel_values is not None:
-            pixel_values = [pixel_values.to(device=self.device, dtype=self.dtype)]
+            pixel_values = [pv.to(device=self.device, dtype=self.dtype) for pv in pixel_values]
         else:
             pixel_values = [None]
-
+    
         return prompt, input_ids, attention_mask, pixel_values
 
     def run(self, inputs: List[Union[Image.Image, str]]):
         prompt, input_ids, attention_mask, pixel_values = self.preprocess(inputs)
         with torch.inference_mode():
-            output_ids = self.model.module.generate(  # <- Use .module here
+            # Use the wrapped model, not .module
+            output_ids = self.model.generate(
                 input_ids,
                 pixel_values=pixel_values,
                 attention_mask=attention_mask,
