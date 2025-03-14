@@ -22,14 +22,13 @@ class RunnerArguments:
 class OvisRunner:
     def __init__(self, args: RunnerArguments):
         self.model_path = args.model_path
-        self.dtype = torch.bfloat16  # Use float16 for lower VRAM if needed
-
-        # Use RAM-backed tmpfs for offload_dir
+        self.dtype = torch.bfloat16  
         self.offload_dir = "/dev/shm/offload"
         os.makedirs(self.offload_dir, exist_ok=True)
-        # Initialize image_placeholder using the imported constant
-        self.image_placeholder = IMAGE_TOKEN  # Add this line
-        # Step 1: Load the model on CPU to compute the device_map
+        self.image_placeholder = IMAGE_TOKEN  # From previous fix
+        
+        # ✅ ADD THIS LINE
+        self.max_partition = args.max_partition  # Initialize max_partition
         temp_model = Ovis.from_pretrained(
             self.model_path,
             torch_dtype=self.dtype,
